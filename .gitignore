@@ -1,2 +1,11 @@
 # Ignore the data folder
 data/
+*.o
+*.out
+*.exe
+*.log
+*.tmp
+*.swp
+.DS_Store
+.vscode/
+.idea/
