@@ -65,3 +65,41 @@ void write_vtk(Simulation *sim, const char *filename) {
     
     fclose(fp);
 }
+
+
+void write_vtk_global(int NX, int global_NY,
+    double dx, double dy,
+    const double *global_density,
+    const char *filename)
+{
+    FILE *f = fopen(filename, "w");
+    if (!f) 
+    {
+        perror("fopen");
+        return;
+    }
+    fprintf(f,
+    "# vtk DataFile Version 3.0\n"
+    "Smoke density (gathered)\n"
+    "ASCII\n"
+    "DATASET STRUCTURED_POINTS\n"
+    "DIMENSIONS %d %d 1\n"
+    "ORIGIN 0 0 0\n"
+    "SPACING %g %g 1.0\n"
+    "POINT_DATA %d\n"
+    "SCALARS density double 1\n"
+    "LOOKUP_TABLE default\n",
+    NX, global_NY,
+    dx, dy,
+    NX*global_NY
+    );
+    for (int j = 0; j < global_NY; j++) 
+    {
+        for (int i = 0; i < NX; i++) 
+        {
+            fprintf(f, "%g\n", global_density[j*NX + i]);
+        }
+    }
+    
+    fclose(f);
+}

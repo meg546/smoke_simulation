@@ -3,6 +3,7 @@
         "simulation.h": "c",
         "visualization.h": "c",
         "stdlib.h": "c",
-        "stdio.h": "c"
+        "stdio.h": "c",
+        "string.h": "c"
     }
 }

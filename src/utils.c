@@ -1,4 +1,6 @@
 #include "utils.h"
+#include <mpi.h>
+#include "simulation.h"
 
 // Helper functions to compute min and max over an array.
 double min_array(const double *arr, int size) {

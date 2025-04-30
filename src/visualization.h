@@ -10,5 +10,9 @@
  *  - POINT_DATA: includes scalar density and vector velocity.
  */
 void write_vtk(Simulation *sim, const char *filename);
+void write_vtk_global(int NX, int global_NY,
+    double dx, double dy,
+    const double *global_density,
+    const char *filename);
 
 #endif // VISUALIZATION_H
