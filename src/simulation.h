@@ -7,6 +7,7 @@
 #include <mpi.h>
 #include <stdbool.h>
 #include <math.h>
+#include <time.h>
 
 // Macro to compute a 1D index for a 2D array stored in row-major order.
 #define IX(i,j,stride) ((i) + (stride) * (j))
@@ -35,6 +36,27 @@ typedef struct {
     int    ambient_temperature;
 } SimulationConfig;
 
+typedef struct SimulationTiming {
+    double total_time;
+    double computation_time;
+    double communication_time;
+    double pressure_solve_time;
+    double advection_time;
+    double diffusion_time;
+    double force_time;
+    double io_time;
+    int step_count;
+} SimulationTiming;
+
+typedef struct ParallelMetrics {
+    double sequential_time;    // Time for p=1 (baseline)
+    double parallel_time;      // Time for current p
+    int num_processors;        // Current p value
+    double speedup;           // Sequential_time / Parallel_time
+    double efficiency;        // Speedup / p
+    double serial_fraction;   // Calculated using Amdahl's Law
+} ParallelMetrics;
+
 typedef struct Simulation {
     Grid *grid;
     int NX, NY;            // GLOBAL dimensions
@@ -48,6 +70,10 @@ typedef struct Simulation {
 
     // Each array has size NX * (local_NY + 2) to store two ghost‐rows
     double *density, *u, *v, *pressure, *temperature;
+    SimulationTiming timing;
+    ParallelMetrics metrics;
+    int *recvcounts;  // Array of receive counts for MPI_Gatherv
+    int *displs;      // Array of displacements for MPI_Gatherv
 } Simulation;
 
 SimulationConfig default_config(void);
@@ -55,7 +81,7 @@ Simulation *initialize_simulation(Grid *grid, SimulationConfig config,
                                   int rank, int nprocs);
 void free_simulation(Simulation *sim);
 
-// core physics on each rank’s local stripe
+// core physics on each rank's local stripe
 void simulation_step(Simulation *sim);
 
 // I/O (only rank 0 writes)

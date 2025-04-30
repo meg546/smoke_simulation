@@ -6,14 +6,16 @@
 #include "grid.h"
 
 void write_vtk(Simulation *sim, const char *filename) {
-    // Create the full file path in the data folder.
+    // Create full filepath with data/ prefix
     char filepath[256];
-    // Concatenate "data/" and the provided filename.
     snprintf(filepath, sizeof(filepath), "data/%s", filename);
+
+    // Try to create data directory if it doesn't exist
+    system("mkdir -p data");
 
     FILE *fp = fopen(filepath, "w");
     if (!fp) {
-        fprintf(stderr, "Error: cannot open file %s for writing.\n", filepath);
+        fprintf(stderr, "Error: Cannot open file %s for writing.\n", filepath);
         return;
     }
     
@@ -72,12 +74,23 @@ void write_vtk_global(int NX, int global_NY,
     const double *global_density,
     const char *filename)
 {
-    FILE *f = fopen(filename, "w");
+    // Create full filepath with data/ prefix
+    char filepath[256];
+    snprintf(filepath, sizeof(filepath), "data/%s", filename);
+
+    FILE *f = fopen(filepath, "w");
     if (!f) 
     {
-        perror("fopen");
-        return;
+        // Create data directory if it doesn't exist
+        system("mkdir -p data");
+        // Try opening file again
+        f = fopen(filepath, "w");
+        if (!f) {
+            fprintf(stderr, "Error: Cannot open file %s for writing.\n", filepath);
+            return;
+        }
     }
+
     fprintf(f,
     "# vtk DataFile Version 3.0\n"
     "Smoke density (gathered)\n"
@@ -93,6 +106,7 @@ void write_vtk_global(int NX, int global_NY,
     dx, dy,
     NX*global_NY
     );
+
     for (int j = 0; j < global_NY; j++) 
     {
         for (int i = 0; i < NX; i++) 
