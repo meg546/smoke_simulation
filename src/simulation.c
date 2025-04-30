@@ -3,9 +3,11 @@
 #include <string.h>
 #include <stdbool.h>
 #include <math.h>
+#include <mpi.h>
 #include "simulation.h"
 #include "grid.h"
 #include "utils.h"
+#include "mpi_utils.h"
 
 // -----------------------------------------------------------------------------
 // Default Configuration
@@ -94,11 +96,12 @@ void free_simulation(Simulation *sim)
 // Advection
 // -----------------------------------------------------------------------------
 
-void advect_density(Simulation *sim) {
-    int NX = sim->NX, NY = sim->NY;
+void advect_density(Simulation *sim, MPI_Data *mpi_data) {
+    int NX = sim->NX;
+    int local_ny = mpi_data->local_ny;
     double dt = sim->dt;
     double dx = sim->grid->dx, dy = sim->grid->dy;
-    int size = NX * NY;
+    int size = NX * local_ny;
 
     double *newDensity = malloc(size * sizeof(double));
     if (!newDensity) {
@@ -106,11 +109,11 @@ void advect_density(Simulation *sim) {
         return;
     }
 
-    for (int j = 0; j < NY; j++) {
+    for (int j = 0; j < local_ny; j++) {
         for (int i = 0; i < NX; i++) {
             int idx = IX(i, j, NX);
             double x = i * dx;
-            double y = j * dy;
+            double y = (j + mpi_data->start_y) * dy;
             double u = sim->u[idx];
             double v = sim->v[idx];
 
@@ -122,21 +125,49 @@ void advect_density(Simulation *sim) {
             if (x_src < 0.0) x_src = 0.0;
             else if (x_src > (NX - 1) * dx) x_src = (NX - 1) * dx;
             if (y_src < 0.0) y_src = 0.0;
-            else if (y_src > (NY - 1) * dy) y_src = (NY - 1) * dy;
+            else if (y_src > (sim->NY - 1) * dy) y_src = (sim->NY - 1) * dy;
 
             // Bilinear interpolation.
             int i0 = (int)floor(x_src / dx);
             int j0 = (int)floor(y_src / dy);
             int i1 = (i0 + 1 >= NX) ? NX - 1 : i0 + 1;
-            int j1 = (j0 + 1 >= NY) ? NY - 1 : j0 + 1;
+            int j1 = (j0 + 1 >= sim->NY) ? sim->NY - 1 : j0 + 1;
             double sx = (x_src / dx) - i0;
             double sy = (y_src / dy) - j0;
 
+            // Handle interpolation across process boundaries
+            double d00, d01, d10, d11;
+            
+            // Get values from local or ghost cells
+            if (j0 >= mpi_data->start_y && j0 < mpi_data->start_y + local_ny) {
+                d00 = sim->density[IX(i0, j0 - mpi_data->start_y, NX)];
+            } else {
+                d00 = 0.0; // Use ghost cell value
+            }
+            
+            if (j1 >= mpi_data->start_y && j1 < mpi_data->start_y + local_ny) {
+                d01 = sim->density[IX(i0, j1 - mpi_data->start_y, NX)];
+            } else {
+                d01 = 0.0; // Use ghost cell value
+            }
+            
+            if (j0 >= mpi_data->start_y && j0 < mpi_data->start_y + local_ny) {
+                d10 = sim->density[IX(i1, j0 - mpi_data->start_y, NX)];
+            } else {
+                d10 = 0.0; // Use ghost cell value
+            }
+            
+            if (j1 >= mpi_data->start_y && j1 < mpi_data->start_y + local_ny) {
+                d11 = sim->density[IX(i1, j1 - mpi_data->start_y, NX)];
+            } else {
+                d11 = 0.0; // Use ghost cell value
+            }
+
             double density_interp =
-                (1 - sx) * (1 - sy) * sim->density[IX(i0, j0, NX)] +
-                sx * (1 - sy) * sim->density[IX(i1, j0, NX)] +
-                (1 - sx) * sy * sim->density[IX(i0, j1, NX)] +
-                sx * sy * sim->density[IX(i1, j1, NX)];
+                (1 - sx) * (1 - sy) * d00 +
+                sx * (1 - sy) * d10 +
+                (1 - sx) * sy * d01 +
+                sx * sy * d11;
 
             newDensity[idx] = density_interp;
         }
@@ -592,41 +623,36 @@ void print_density(const Simulation *sim) {
 // Main Simulation Step
 // -----------------------------------------------------------------------------
 
-void simulation_step(Simulation *sim)
+void simulation_step(Simulation *sim, MPI_Data *mpi_data)
 {
-    // Determine the current step number.
-    int step = (int)(sim->time / sim->dt);
+    // Exchange ghost cells before each operation
+    exchange_ghost_cells(sim, mpi_data);
+    advect_density(sim, mpi_data);
     
-    // Only inject smoke if within the pulse duration.
-    if (step % sim->config.smoke_pulse_period < sim->config.smoke_pulse_duration) {
-        // Inject smoke at a fixed source location.
-        inject_smoke(sim, sim->NX / 2, 5, sim->config.smoke_radius, sim->config.smoke_amount);
-    }
-
-    if (step % sim->config.smoke_pulse_period == 0) {
-        inject_heat(sim, sim->NX / 2, 5, sim->config.smoke_radius, 50.0);
-    }
-
-    advect_density(sim);
+    exchange_ghost_cells(sim, mpi_data);
     diffuse_density(sim);
-
-    advect_temperature(sim);
-    diffuse_temperature(sim);
-
+    
+    exchange_ghost_cells(sim, mpi_data);
+    advect_velocity(sim, mpi_data);
+    
+    exchange_ghost_cells(sim, mpi_data);
     diffuse_velocity(sim);
-
-    apply_buoyancy(sim);
-    apply_wind(sim);
-
-    // Inject turbulence periodically.
-    if (step % sim->config.turbulence_injection_interval == 0) {
-        inject_turbulence(sim);
-    }
-
-    apply_vorticity_confinement(sim);
+    
+    exchange_ghost_cells(sim, mpi_data);
     solve_pressure(sim);
+    
+    exchange_ghost_cells(sim, mpi_data);
     update_velocity(sim);
-
+    
+    exchange_ghost_cells(sim, mpi_data);
+    apply_buoyancy(sim);
+    
+    exchange_ghost_cells(sim, mpi_data);
+    apply_wind(sim);
+    
+    exchange_ghost_cells(sim, mpi_data);
+    apply_vorticity_confinement(sim);
+    
     sim->time += sim->dt;
     printf("Completed simulation step. New time = %f\n", sim->time);
 }

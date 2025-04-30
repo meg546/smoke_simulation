@@ -1,9 +1,9 @@
 # Compiler and flags
-CC = gcc
+CC = mpicc
 CFLAGS = -Wall -O3 -std=c99
 
 # Source files (update if you add more modules)
-SRCS = src/main.c src/grid.c src/simulation.c src/utils.c src/visualization.c
+SRCS = src/main.c src/grid.c src/simulation.c src/utils.c src/visualization.c src/mpi_utils.c
 
 # Object files
 OBJS = $(SRCS:.c=.o)
@@ -15,7 +15,7 @@ TARGET = smoke_simulation
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) -lm
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -24,7 +24,7 @@ $(TARGET): $(OBJS)
 ifeq ($(OS),Windows_NT)
     RM = del /Q
     # For Windows, list files using backslashes and wildcard pattern.
-    CLEAN_FILES = src\main.o src\grid.o src\simulation.o src\utils.o src\visualization.o $(TARGET).exe output.vtk data\*
+    CLEAN_FILES = src\main.o src\grid.o src\simulation.o src\utils.o src\visualization.o src\mpi_utils.o $(TARGET).exe output.vtk data\*
 else
     RM = rm -f
     CLEAN_FILES = $(OBJS) $(TARGET) output.vtk data/*
@@ -32,3 +32,9 @@ endif
 
 clean:
 	$(RM) $(CLEAN_FILES)
+
+# Run rule for convenience
+run: $(TARGET)
+	mpirun -np 4 ./$(TARGET)
+
+.PHONY: all clean run
