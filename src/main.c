@@ -1,4 +1,3 @@
-// main.c
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,10 +21,10 @@ int main(int argc, char **argv) {
     MPI_Barrier(MPI_COMM_WORLD);
 
     // Grid & sim params
-    const int NX = 100, NY = 100;
+    const int NX = 500, NY = 500;
     const double Lx = 1.0, Ly = 1.0;
-    const double dt = 0.005, T = 5.0;
-    const int output_interval = 1;
+    const double dt = 0.0002, T = 1.0;
+    const int output_interval = 2;
 
     // Start total time measurement
     double total_start_time = MPI_Wtime();
@@ -61,7 +60,7 @@ int main(int argc, char **argv) {
 
             // Gather from all processes to rank 0
             MPI_Gatherv(
-                &sim->density[IX(0,1,NX)],  // Skip ghost row
+                &sim->density[IX(0,1,NX)], 
                 sim->local_NY * NX,
                 MPI_DOUBLE,
                 global_density,
@@ -162,7 +161,7 @@ int main(int argc, char **argv) {
         printf("Min Process Time: %.3f seconds\n", min_time);
         printf("Max Process Time: %.3f seconds\n", max_time);
         printf("Avg Process Time: %.3f seconds\n", avg_time);
-        printf("Load Imbalance: %.2f%%\n", 
+        printf("Load Imbalance: %.2f%%\n",
                ((max_time - min_time) / avg_time) * 100.0);
 
         if (sequential_time > 0) {
@@ -179,15 +178,33 @@ int main(int argc, char **argv) {
             
             printf("\nScaling Analysis:\n");
             printf("Linear Speedup (theoretical): %.2f\n", (double)nprocs);
-            printf("Scaling Efficiency: %.2f%%\n", 
+            printf("Scaling Efficiency: %.2f%%\n",
                    (sim->metrics.speedup / nprocs) * 100.0);
 
-            // Save results for plotting
-            FILE *fp = fopen("scaling_results.txt", "a");
+            // --- append CSV with all metrics for this run ---
+            const char *outfname = "scaling_results.csv";
+            FILE *fp = fopen(outfname, "a");
             if (fp) {
-                fprintf(fp, "%d %.6f %.6f %.6f %.6f\n", 
-                        nprocs, total_compute_time, sim->metrics.speedup, 
-                        sim->metrics.efficiency, sim->metrics.serial_fraction);
+                // if the file was empty, write header
+                fseek(fp, 0, SEEK_END);
+                if (ftell(fp) == 0) {
+                    fprintf(fp,
+                        "p,wall_time_s,avg_comp_ms,avg_comm_ms,speedup,efficiency_pct,serial_frac\n");
+                }
+                // compute averages in ms
+                double avg_comp_ms = (sim->timing.computation_time / sim->timing.step_count) * 1e3;
+                double avg_comm_ms = (sim->timing.communication_time  / sim->timing.step_count) * 1e3;
+
+                fprintf(fp,
+                    "%d,%.6f,%.3f,%.3f,%.3f,%.1f,%.6f\n",
+                    nprocs,
+                    total_compute_time,
+                    avg_comp_ms,
+                    avg_comm_ms,
+                    sim->metrics.speedup,
+                    sim->metrics.efficiency * 100.0,
+                    sim->metrics.serial_fraction
+                );
                 fclose(fp);
             }
         }

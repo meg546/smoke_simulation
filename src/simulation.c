@@ -1,3 +1,5 @@
+// simulation.c
+
 #include "simulation.h"
 #include "grid.h"
 #include "utils.h"
@@ -8,49 +10,111 @@
 #include <math.h>
 
 // -----------------------------------------------------------------------------
-// Exchange our two ghost-rows (j=0 and j=local_NY+1) with up/down neighbors
+// Perform exactly one mirror (to global walls) + one halo‐exchange
 // -----------------------------------------------------------------------------
-static void sim_exchange_ghost_rows(Simulation *sim, double *field) {
+static void mirror_and_halo_exchange(Simulation *sim,
+                                     double *field,
+                                     void (*enforce_bc)(Simulation*, double*))
+{
+    // 1) mirror physical wall into ghost rows
+    enforce_bc(sim, field);
+    // 2) exchange that one layer with neighbors
+    //    (fills the MPI seams)
     MPI_Status status;
     int NX = sim->NX;
     int M  = sim->local_NY;
 
-    // send our first real row j=1 ↑ to rank-1 → receive into j=0
     if (sim->rank > 0) {
         MPI_Sendrecv(
-            &field[IX(0,1,NX)],     NX, MPI_DOUBLE, sim->rank-1, 100,
-            &field[IX(0,0,NX)],     NX, MPI_DOUBLE, sim->rank-1, 101,
+            &field[IX(0,1,NX)],   NX, MPI_DOUBLE, sim->rank-1, 100,
+            &field[IX(0,0,NX)],   NX, MPI_DOUBLE, sim->rank-1, 101,
             MPI_COMM_WORLD, &status
         );
     }
-    // send our last real row j=M ↓ to rank+1 → receive into j=M+1
     if (sim->rank < sim->nprocs-1) {
         MPI_Sendrecv(
-            &field[IX(0,M,NX)],     NX, MPI_DOUBLE, sim->rank+1, 101,
-            &field[IX(0,M+1,NX)],   NX, MPI_DOUBLE, sim->rank+1, 100,
+            &field[IX(0,M,NX)],   NX, MPI_DOUBLE, sim->rank+1, 101,
+            &field[IX(0,M+1,NX)], NX, MPI_DOUBLE, sim->rank+1, 100,
             MPI_COMM_WORLD, &status
         );
     }
 }
 
 // -----------------------------------------------------------------------------
-// Enforce no‐flux (Neumann) at the global top/bottom for scalars
-//   density and temperature ghost rows mirror their adjacent interior rows
+// Exchange our two ghost‐rows (j=0 and j=local_NY+1) with up/down neighbors
 // -----------------------------------------------------------------------------
-static void enforce_global_scalar_bc(Simulation *sim, double *field) {
+static void sim_exchange_ghost_rows(Simulation *sim, double *field) {
+    MPI_Status status;
     int NX = sim->NX;
     int M  = sim->local_NY;
-    // bottom wall
+
+    if (sim->rank > 0) {
+        MPI_Sendrecv(
+            &field[IX(0,1,NX)],   NX, MPI_DOUBLE, sim->rank-1, 100,
+            &field[IX(0,0,NX)],   NX, MPI_DOUBLE, sim->rank-1, 101,
+            MPI_COMM_WORLD, &status
+        );
+    }
+    if (sim->rank < sim->nprocs-1) {
+        MPI_Sendrecv(
+            &field[IX(0,M,NX)],   NX, MPI_DOUBLE, sim->rank+1, 101,
+            &field[IX(0,M+1,NX)], NX, MPI_DOUBLE, sim->rank+1, 100,
+            MPI_COMM_WORLD, &status
+        );
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Enforce no‐slip on global walls (fills velocity ghost rows)
+// -----------------------------------------------------------------------------
+static void enforce_global_velocity_bc(Simulation *sim, double *unused) {
+    int NX = sim->NX, M = sim->local_NY;
+    // side walls
+    for (int j = 1; j <= M; ++j) {
+        sim->u[IX(0, j, NX)]    = 0.0;
+        sim->v[IX(0, j, NX)]    = 0.0;
+        sim->u[IX(NX-1, j, NX)] = 0.0;
+        sim->v[IX(NX-1, j, NX)] = 0.0;
+    }
+    // bottom wall + ghost
     if (sim->rank == 0) {
-        for (int i = 0; i < NX; i++) {
-            field[IX(i,0,    NX)] = field[IX(i,1,    NX)];
+        for (int i = 0; i < NX; ++i) {
+            sim->u[IX(i,1  ,NX)] = 0.0;
+            sim->v[IX(i,1  ,NX)] = 0.0;
+            sim->u[IX(i,0  ,NX)] = 0.0;
+            sim->v[IX(i,0  ,NX)] = 0.0;
         }
     }
-    // top wall
-    if (sim->rank == sim->nprocs - 1) {
-        for (int i = 0; i < NX; i++) {
-            field[IX(i,M+1,NX)] = field[IX(i,M,   NX)];
+    // top wall + ghost
+    if (sim->rank == sim->nprocs-1) {
+        for (int i = 0; i < NX; ++i) {
+            sim->u[IX(i,M  ,NX)] = 0.0;
+            sim->v[IX(i,M  ,NX)] = 0.0;
+            sim->u[IX(i,M+1,NX)] = 0.0;
+            sim->v[IX(i,M+1,NX)] = 0.0;
         }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Enforce no‐flux on global walls (fills scalar ghost rows)
+// -----------------------------------------------------------------------------
+static void enforce_global_scalar_bc(Simulation *sim, double *field) {
+    int NX = sim->NX, M = sim->local_NY;
+    // side walls
+    for (int j = 1; j <= M; ++j) {
+        field[IX(0   ,j,NX)] = field[IX(1   ,j,NX)];
+        field[IX(NX-1,j,NX)] = field[IX(NX-2,j,NX)];
+    }
+    // bottom wall
+    if (sim->rank == 0) {
+        for (int i = 0; i < NX; ++i)
+            field[IX(i,0   ,NX)] = field[IX(i,1   ,NX)];
+    }
+    // top wall
+    if (sim->rank == sim->nprocs-1) {
+        for (int i = 0; i < NX; ++i)
+            field[IX(i,M+1,NX)] = field[IX(i,M   ,NX)];
     }
 }
 
@@ -58,57 +122,76 @@ static void enforce_global_scalar_bc(Simulation *sim, double *field) {
 // Default simulation parameters
 // -----------------------------------------------------------------------------
 SimulationConfig default_config(void) {
-    SimulationConfig c;
-    c.dt                             = 0.01;    // Keep timestep
-    c.T                              = 5.0;
-    c.density_diffusion              = 0.00015;  // Slightly increased for better spread
-    c.velocity_viscosity             = 0.003;    // Reduced to allow more natural flow
-    c.pressure_tolerance             = 1e-4;     // Keep this value
-    c.pressure_max_iter              = 50;       // Keep this value
-    c.buoyancy_beta                  = 0.05;     // Reduced for more gentle rising
-    c.ambient_density                = 0.01;
-    c.wind_u                         = 0.1;      // Slight horizontal drift
-    c.wind_v                         = 0.0;      // No vertical wind
-    c.turbulence_magnitude           = 0.015;    // Increased for more natural movement
-    c.turbulence_injection_interval  = 2;        // More frequent turbulence
-    c.vorticity_epsilon             = 0.15;     // Increased vorticity for better swirling
-    c.smoke_radius                  = 6;        // Smaller initial radius
-    c.smoke_amount                  = 0.3;      // Reduced density for better detail
-    c.smoke_pulse_period           = 8;        // More frequent pulses
-    c.smoke_pulse_duration         = 4;        // Shorter pulses
-    c.velocity_clamp_min           = -3.0;     // Reduced clamping for smoother motion
-    c.velocity_clamp_max           = 3.0;
-    c.thermal_diffusivity         = 0.00012;   // Slightly increased heat diffusion
-    c.ambient_temperature         = 300.0;
-    return c;
+  SimulationConfig c;
+
+  // ——————— Time stepping ———————
+  // For NX=NY=500 on a unit domain, Δx≈1/500; with max |u|≈1,
+  // CFL ⇒ dt≲Δx/|u|≈0.002.  We pick a hair under that.
+  c.dt                            = 0.002;
+
+  c.T                             = 5.0;
+
+  // ————— Diffusion & viscosity ——————
+  c.density_diffusion             = 0.00005;
+  c.velocity_viscosity            = 0.0002;
+
+  // ———— Pressure solver (stability & speed) ————
+  c.pressure_tolerance            = 1e-6;
+  c.pressure_max_iter             = 2000;
+
+  // —————— Buoyancy & ambient ——————
+  c.buoyancy_beta                 = 0.02;
+  c.ambient_density               = 0.001;
+
+  // ————— Wind —————
+  c.wind_u                        = 0.05;
+  c.wind_v                        = 0.0;
+
+  // ————— Turbulence & vorticity —————
+  c.turbulence_magnitude          = 0.007;
+  c.turbulence_injection_interval = 1;
+  c.vorticity_epsilon             = 0.20;
+
+  // ————— Smoke source —————
+  c.smoke_radius                  = 10;
+  c.smoke_amount                  = 0.6;
+  c.smoke_pulse_period            = 1;
+  c.smoke_pulse_duration          = (int) (c.T / c.dt);
+
+  // ———— Velocity clamping ————
+  c.velocity_clamp_min            = -4.0;
+  c.velocity_clamp_max            =  4.0;
+
+  // ———— Thermal effects ————
+  c.thermal_diffusivity           = 0.0005;
+  c.ambient_temperature           = 300.0;
+
+  return c;
 }
 
 // -----------------------------------------------------------------------------
-// MPI-aware init/cleanup: split NY into stripes with 2 ghost‐rows each
+// MPI‐aware init/cleanup
 // -----------------------------------------------------------------------------
 Simulation *initialize_simulation(Grid *grid,
                                   SimulationConfig cfg,
                                   int rank, int nprocs)
 {
     Simulation *sim = malloc(sizeof(*sim));
-    sim->grid      = grid;
-    sim->NX        = grid->NX;
-    sim->NY        = grid->NY;     // total global rows
-    sim->dt        = cfg.dt;
-    sim->T         = cfg.T;
-    sim->time      = 0.0;
-    sim->config    = cfg;
-    sim->rank      = rank;
-    sim->nprocs    = nprocs;
+    sim->grid   = grid;
+    sim->NX     = grid->NX;
+    sim->NY     = grid->NY;
+    sim->dt     = cfg.dt;
+    sim->T      = cfg.T;
+    sim->time   = 0.0;
+    sim->config = cfg;
+    sim->rank   = rank;
+    sim->nprocs = nprocs;
 
-    // split NY into nearly‐equal stripes
     int base = grid->NY / nprocs;
     int rem  = grid->NY % nprocs;
     sim->local_NY = base + (rank < rem ? 1 : 0);
-    // global start‐row index for our interior j=1
     sim->j0       = rank * base + (rank < rem ? rank : rem);
 
-    // allocate NX × (local_NY+2) for each field
     int total = sim->NX * (sim->local_NY + 2);
     sim->density     = calloc(total, sizeof(double));
     sim->u           = calloc(total, sizeof(double));
@@ -116,40 +199,24 @@ Simulation *initialize_simulation(Grid *grid,
     sim->pressure    = calloc(total, sizeof(double));
     sim->temperature = calloc(total, sizeof(double));
 
-    // initialize interior to ambient temperature
-    for (int j = 1; j <= sim->local_NY; ++j) {
-        for (int i = 0; i < sim->NX; ++i) {
+    for (int j = 1; j <= sim->local_NY; ++j)
+        for (int i = 0; i < sim->NX; ++i)
             sim->temperature[IX(i,j,sim->NX)] = cfg.ambient_temperature;
-        }
-    }
 
-    // Initialize timing structure
-    sim->timing.total_time = 0.0;
-    sim->timing.computation_time = 0.0;
-    sim->timing.communication_time = 0.0;
-    sim->timing.pressure_solve_time = 0.0;
-    sim->timing.advection_time = 0.0;
-    sim->timing.diffusion_time = 0.0;
-    sim->timing.force_time = 0.0;
-    sim->timing.io_time = 0.0;
-    sim->timing.step_count = 0;
+    memset(&sim->timing, 0, sizeof(sim->timing));
 
-    // Initialize recvcounts and displs for MPI_Gatherv
     if (rank == 0) {
         sim->recvcounts = malloc(nprocs * sizeof(int));
-        sim->displs = malloc(nprocs * sizeof(int));
-        int base = grid->NY / nprocs;
-        int rem = grid->NY % nprocs;
+        sim->displs     = malloc(nprocs * sizeof(int));
         int offset = 0;
-        for (int r = 0; r < nprocs; r++) {
+        for (int r = 0; r < nprocs; ++r) {
             int rows = base + (r < rem ? 1 : 0);
             sim->recvcounts[r] = rows * grid->NX;
-            sim->displs[r] = offset * grid->NX;
+            sim->displs[r]     = offset * grid->NX;
             offset += rows;
         }
     } else {
-        sim->recvcounts = NULL;
-        sim->displs = NULL;
+        sim->recvcounts = sim->displs = NULL;
     }
 
     return sim;
@@ -168,63 +235,17 @@ void free_simulation(Simulation *sim) {
 }
 
 // -----------------------------------------------------------------------------
-// Advection kernels (semi-Lagrangian, use pre-exchanged ghost rows)
+// Semi‐Lagrangian advection with reflection at all four walls
 // -----------------------------------------------------------------------------
 void advect_density(Simulation *sim) {
-  int NX = sim->NX, M = sim->local_NY;
-  double dt = sim->dt, dx = sim->grid->dx, dy = sim->grid->dy;
-  double *old = sim->density;
-  double *newD = malloc(NX*(M+2)*sizeof(double));
-
-  memcpy(newD, old, NX*(M+2)*sizeof(double));
-
-  for (int j = 1; j <= M; ++j) {
-      double y = (sim->j0 + j - 1) * dy;
-      for (int i = 0; i < NX; ++i) {
-          int idx = IX(i,j,NX);
-          double x = i*dx;
-          // FIX: Use velocity components from velocity fields, not density!
-          double u = sim->u[idx], v = sim->v[idx];
-          double xs = fmax(0.0, fmin(x - u*dt, (NX-1)*dx));
-          double ys = fmax(0.0, fmin(y - v*dt, (sim->NY-1)*dy));
-
-          // Rest of the function remains the same
-          int i0  = (int)floor(xs/dx),
-              j0g = (int)floor(ys/dy);
-          int i1  = (i0+1 < NX ? i0+1 : NX-1),
-              j1g = (j0g+1 < sim->NY ? j0g+1 : sim->NY-1);
-
-          int lj0 = j0g - sim->j0 + 1;
-          int lj1 = j1g - sim->j0 + 1;
-          lj0 = fmax(0, fmin(lj0, M+1));
-          lj1 = fmax(0, fmin(lj1, M+1));
-
-          double sx = xs/dx - i0,
-                 sy = ys/dy - j0g;
-
-          double d00 = old[IX(i0,lj0,NX)],
-                 d10 = old[IX(i1,lj0,NX)],
-                 d01 = old[IX(i0,lj1,NX)],
-                 d11 = old[IX(i1,lj1,NX)];
-
-          newD[idx] = (1-sx)*(1-sy)*d00
-                     + sx*(1-sy)*d10
-                     + (1-sx)*sy  *d01
-                     + sx*sy      *d11;
-      }
-  }
-
-  memcpy(sim->density, newD, NX*(M+2)*sizeof(double));
-  free(newD);
-}
-
-void advect_temperature(Simulation *sim) {
     int NX = sim->NX, M = sim->local_NY;
     double dt = sim->dt, dx = sim->grid->dx, dy = sim->grid->dy;
-    double *old = sim->temperature;
-    double *newT = malloc(NX*(M+2)*sizeof(double));
+    double *old  = sim->density;
+    double *newD = calloc(NX*(M+2), sizeof(double));
+    double x_max = (NX-1)*dx;
+    double y_max = (sim->NY-1)*dy;
 
-    memcpy(newT, old, NX*(M+2)*sizeof(double));
+    memcpy(newD, old, NX*(M+2)*sizeof(double));
 
     for (int j = 1; j <= M; ++j) {
         double y = (sim->j0 + j - 1) * dy;
@@ -232,12 +253,22 @@ void advect_temperature(Simulation *sim) {
             int idx = IX(i,j,NX);
             double x = i*dx;
             double u = sim->u[idx], v = sim->v[idx];
-            double xs = fmax(0.0, fmin(x - u*dt, (NX-1)*dx));
-            double ys = fmax(0.0, fmin(y - v*dt, (sim->NY-1)*dy));
+
+            double xs = x - u*dt;
+            double ys = y - v*dt;
+
+            while (xs < 0.0 || xs > x_max) {
+                if (xs < 0.0) xs = -xs;
+                else          xs = 2*x_max - xs;
+            }
+            while (ys < 0.0 || ys > y_max) {
+                if (ys < 0.0) ys = -ys;
+                else          ys = 2*y_max - ys;
+            }
 
             int i0  = (int)floor(xs/dx),
                 j0g = (int)floor(ys/dy);
-            int i1  = (i0+1 < NX ? i0+1 : NX-1),
+            int i1  = (i0+1 < NX   ? i0+1 : NX-1),
                 j1g = (j0g+1 < sim->NY ? j0g+1 : sim->NY-1);
 
             int lj0 = j0g - sim->j0 + 1;
@@ -248,15 +279,73 @@ void advect_temperature(Simulation *sim) {
             double sx = xs/dx - i0,
                    sy = ys/dy - j0g;
 
-            double t00 = old[IX(i0,lj0,NX)],
-                   t10 = old[IX(i1,lj0,NX)],
-                   t01 = old[IX(i0,lj1,NX)],
-                   t11 = old[IX(i1,lj1,NX)];
+            double d00 = old[IX(i0, lj0, NX)];
+            double d10 = old[IX(i1, lj0, NX)];
+            double d01 = old[IX(i0, lj1, NX)];
+            double d11 = old[IX(i1, lj1, NX)];
+
+            newD[idx] = (1-sx)*(1-sy)*d00
+                       +    sx *(1-sy)*d10
+                       + (1-sx)*   sy *d01
+                       +    sx *   sy *d11;
+        }
+    }
+
+    memcpy(sim->density, newD, NX*(M+2)*sizeof(double));
+    free(newD);
+}
+
+void advect_temperature(Simulation *sim) {
+    int NX = sim->NX, M = sim->local_NY;
+    double dt = sim->dt, dx = sim->grid->dx, dy = sim->grid->dy;
+    double *old  = sim->temperature;
+    double *newT = calloc(NX*(M+2), sizeof(double));
+    double x_max = (NX-1)*dx;
+    double y_max = (sim->NY-1)*dy;
+
+    memcpy(newT, old, NX*(M+2)*sizeof(double));
+
+    for (int j = 1; j <= M; ++j) {
+        double y = (sim->j0 + j - 1) * dy;
+        for (int i = 0; i < NX; ++i) {
+            int idx = IX(i,j,NX);
+            double x = i*dx;
+            double u = sim->u[idx], v = sim->v[idx];
+
+            double xs = x - u*dt;
+            double ys = y - v*dt;
+
+            while (xs < 0.0 || xs > x_max) {
+                if (xs < 0.0) xs = -xs;
+                else          xs = 2*x_max - xs;
+            }
+            while (ys < 0.0 || ys > y_max) {
+                if (ys < 0.0) ys = -ys;
+                else          ys = 2*y_max - ys;
+            }
+
+            int i0  = (int)floor(xs/dx),
+                j0g = (int)floor(ys/dy);
+            int i1  = (i0+1 < NX   ? i0+1 : NX-1),
+                j1g = (j0g+1 < sim->NY ? j0g+1 : sim->NY-1);
+
+            int lj0 = j0g - sim->j0 + 1;
+            int lj1 = j1g - sim->j0 + 1;
+            lj0 = fmax(0, fmin(lj0, M+1));
+            lj1 = fmax(0, fmin(lj1, M+1));
+
+            double sx = xs/dx - i0,
+                   sy = ys/dy - j0g;
+
+            double t00 = old[IX(i0, lj0, NX)];
+            double t10 = old[IX(i1, lj0, NX)];
+            double t01 = old[IX(i0, lj1, NX)];
+            double t11 = old[IX(i1, lj1, NX)];
 
             newT[idx] = (1-sx)*(1-sy)*t00
-                       + sx*(1-sy)*t10
-                       + (1-sx)*sy  *t01
-                       + sx*sy      *t11;
+                       +    sx *(1-sy)*t10
+                       + (1-sx)*   sy *t01
+                       +    sx *   sy *t11;
         }
     }
 
@@ -273,7 +362,7 @@ void diffuse_density(Simulation *sim) {
            dx = sim->grid->dx,
            dy = sim->grid->dy,
            diff = sim->config.density_diffusion;
-    double *newD = malloc(NX*(M+2)*sizeof(double));
+    double *newD = calloc(NX*(M+2), sizeof(double));
 
     // interior
     for(int j=1;j<=M;++j){
@@ -308,8 +397,8 @@ void diffuse_velocity(Simulation *sim) {
            dx = sim->grid->dx,
            dy = sim->grid->dy,
            visc = sim->config.velocity_viscosity;
-    double *u2 = malloc(NX*(M+2)*sizeof(double));
-    double *v2 = malloc(NX*(M+2)*sizeof(double));
+    double *u2 = calloc(NX*(M+2), sizeof(double));
+    double *v2 = calloc(NX*(M+2), sizeof(double));
 
     for(int j=1;j<=M;++j){
       for(int i=1;i<NX-1;++i){
@@ -347,7 +436,7 @@ void diffuse_temperature(Simulation *sim) {
            dx = sim->grid->dx,
            dy = sim->grid->dy,
            alpha = sim->config.thermal_diffusivity;
-    double *t2 = malloc(NX*(M+2)*sizeof(double));
+    double *t2 = calloc(NX*(M+2), sizeof(double));
 
     for(int j=1;j<=M;++j){
       for(int i=1;i<NX-1;++i){
@@ -445,8 +534,8 @@ void update_velocity(Simulation *sim) {
            dt = sim->dt,
            vmin = sim->config.velocity_clamp_min,
            vmax = sim->config.velocity_clamp_max;
-    double *u2 = malloc(NX*(M+2)*sizeof(double));
-    double *v2 = malloc(NX*(M+2)*sizeof(double));
+    double *u2 = calloc(NX*(M+2), sizeof(double));
+    double *v2 = calloc(NX*(M+2), sizeof(double));
 
     // Update velocities using central differences for pressure
     for(int j=1;j<=M;++j){
@@ -597,117 +686,114 @@ void inject_heat(Simulation *sim,
     }
 }
 
-// ----------------------------------------------------------------------------
-// One time‐step: injection → 7 halo‐exchanges + physics → print
-// ----------------------------------------------------------------------------
 void simulation_step(Simulation *sim) {
-    double step_start = MPI_Wtime();
-    double comm_time = 0.0;
-    double comp_time = 0.0;
-    double temp_start;
-    
-    int step = (int)(sim->time / sim->dt);
-    int gy   = 5;
+  double t0 = MPI_Wtime();
+  double comp = 0.0, comm = 0.0, t;
+  int step = (int)(sim->time / sim->dt);
+  int gy   = 5;
 
-    // 0) enforce global no-flux walls on density & temperature
-    temp_start = MPI_Wtime();
-    enforce_global_scalar_bc(sim, sim->density);
-    enforce_global_scalar_bc(sim, sim->temperature);
-    comp_time += MPI_Wtime() - temp_start;
+  // 0) mirror & exchange all fields once to fill ghost rows
+  t = MPI_Wtime();
+  mirror_and_halo_exchange(sim, sim->u,           enforce_global_velocity_bc);
+  mirror_and_halo_exchange(sim, sim->v,           enforce_global_velocity_bc);
+  mirror_and_halo_exchange(sim, sim->density,     enforce_global_scalar_bc);
+  mirror_and_halo_exchange(sim, sim->temperature, enforce_global_scalar_bc);
+  comm += MPI_Wtime() - t;
 
-    // 1) inject smoke/heat on rank 0
-    temp_start = MPI_Wtime();
-    if (sim->rank == 0) {
-        if (step % sim->config.smoke_pulse_period < sim->config.smoke_pulse_duration)
-            inject_smoke(sim, sim->NX/2, gy,
-                         sim->config.smoke_radius,
-                         sim->config.smoke_amount);
-        if (step % sim->config.smoke_pulse_period == 0)
-            inject_heat(sim, sim->NX/2, gy,
-                        sim->config.smoke_radius, 50.0);
-    }
-    comp_time += MPI_Wtime() - temp_start;
+  // 1) inject & exchange density
+  t = MPI_Wtime();
+  if (sim->rank == 0) {
+      if (step % sim->config.smoke_pulse_period < sim->config.smoke_pulse_duration)
+          inject_smoke(sim, sim->NX/2, gy, sim->config.smoke_radius, sim->config.smoke_amount);
+      if (step % sim->config.smoke_pulse_period == 0)
+          inject_heat(sim, sim->NX/2, gy, sim->config.smoke_radius, 50.0);
+  }
+  comp += MPI_Wtime() - t;
 
-    // Communication timing
-    temp_start = MPI_Wtime();
-    sim_exchange_ghost_rows(sim, sim->density);
-    comm_time += MPI_Wtime() - temp_start;
+  t = MPI_Wtime();
+  mirror_and_halo_exchange(sim, sim->density, enforce_global_scalar_bc);
+  comm += MPI_Wtime() - t;
 
-    // 2) density advection
-    temp_start = MPI_Wtime();
-    double advect_start = MPI_Wtime();
-    temp_start = MPI_Wtime();
-    sim_exchange_ghost_rows(sim, sim->u);
-    sim_exchange_ghost_rows(sim, sim->v);
-    sim_exchange_ghost_rows(sim, sim->density);
-    comm_time += MPI_Wtime() - temp_start;
+  // 2) density advection
+  t = MPI_Wtime();
+  mirror_and_halo_exchange(sim, sim->u,       enforce_global_velocity_bc);
+  mirror_and_halo_exchange(sim, sim->v,       enforce_global_velocity_bc);
+  mirror_and_halo_exchange(sim, sim->density, enforce_global_scalar_bc);
+  advect_density(sim);
+  comp += MPI_Wtime() - t;
+  mirror_and_halo_exchange(sim, sim->density, enforce_global_scalar_bc);
 
-    temp_start = MPI_Wtime();
-    advect_density(sim);
-    enforce_global_scalar_bc(sim, sim->density);
-    sim->timing.advection_time += MPI_Wtime() - advect_start;
-    comp_time += MPI_Wtime() - temp_start;
+  // 3) density diffusion
+  t = MPI_Wtime();
+  mirror_and_halo_exchange(sim, sim->density, enforce_global_scalar_bc);
+  diffuse_density(sim);
+  comp += MPI_Wtime() - t;
+  mirror_and_halo_exchange(sim, sim->density, enforce_global_scalar_bc);
 
-    // 3) density diffusion
-    sim_exchange_ghost_rows(sim, sim->density);
-    diffuse_density(sim);
-    enforce_global_scalar_bc(sim, sim->density);
+  // 4) temperature advection
+  t = MPI_Wtime();
+  mirror_and_halo_exchange(sim, sim->u,           enforce_global_velocity_bc);
+  mirror_and_halo_exchange(sim, sim->v,           enforce_global_velocity_bc);
+  mirror_and_halo_exchange(sim, sim->temperature, enforce_global_scalar_bc);
+  advect_temperature(sim);
+  comp += MPI_Wtime() - t;
+  mirror_and_halo_exchange(sim, sim->temperature, enforce_global_scalar_bc);
 
-    // 4) temperature advection
-    sim_exchange_ghost_rows(sim, sim->u);
-    sim_exchange_ghost_rows(sim, sim->v);
-    sim_exchange_ghost_rows(sim, sim->temperature);
-    advect_temperature(sim);
-    enforce_global_scalar_bc(sim, sim->temperature);
+  // 5) temperature diffusion
+  t = MPI_Wtime();
+  mirror_and_halo_exchange(sim, sim->temperature, enforce_global_scalar_bc);
+  diffuse_temperature(sim);
+  comp += MPI_Wtime() - t;
+  mirror_and_halo_exchange(sim, sim->temperature, enforce_global_scalar_bc);
 
-    // 5) temperature diffusion
-    sim_exchange_ghost_rows(sim, sim->temperature);
-    diffuse_temperature(sim);
-    enforce_global_scalar_bc(sim, sim->temperature);
+  // 6) velocity diffusion
+  t = MPI_Wtime();
+  mirror_and_halo_exchange(sim, sim->u, enforce_global_velocity_bc);
+  mirror_and_halo_exchange(sim, sim->v, enforce_global_velocity_bc);
+  diffuse_velocity(sim);
+  comp += MPI_Wtime() - t;
+  mirror_and_halo_exchange(sim, sim->u, enforce_global_velocity_bc);
+  mirror_and_halo_exchange(sim, sim->v, enforce_global_velocity_bc);
 
-    // 6) velocity diffusion
-    sim_exchange_ghost_rows(sim, sim->u);
-    sim_exchange_ghost_rows(sim, sim->v);
-    diffuse_velocity(sim);
+  // 7) forces + vorticity
+  t = MPI_Wtime();
+  apply_buoyancy(sim);
+  apply_wind(sim);
+  if (step % sim->config.turbulence_injection_interval == 0)
+      inject_turbulence(sim);
+  mirror_and_halo_exchange(sim, sim->u, enforce_global_velocity_bc);
+  mirror_and_halo_exchange(sim, sim->v, enforce_global_velocity_bc);
+  apply_vorticity_confinement(sim);
+  comp += MPI_Wtime() - t;
+  mirror_and_halo_exchange(sim, sim->u, enforce_global_velocity_bc);
+  mirror_and_halo_exchange(sim, sim->v, enforce_global_velocity_bc);
 
-    // 7) buoyancy, wind, turbulence, vorticity
-    apply_buoyancy(sim);
-    apply_wind(sim);
-    if (step % sim->config.turbulence_injection_interval == 0)
-        inject_turbulence(sim);
-    sim_exchange_ghost_rows(sim, sim->u);
-    sim_exchange_ghost_rows(sim, sim->v);
-    apply_vorticity_confinement(sim);
+  // 8) pressure solve
+  t = MPI_Wtime();
+  mirror_and_halo_exchange(sim, sim->u,        enforce_global_velocity_bc);
+  mirror_and_halo_exchange(sim, sim->v,        enforce_global_velocity_bc);
+  mirror_and_halo_exchange(sim, sim->pressure, enforce_global_scalar_bc);
+  solve_pressure(sim);
+  comp += MPI_Wtime() - t;
 
-    // 8) pressure solve
-    double pressure_start = MPI_Wtime();
-    temp_start = MPI_Wtime();
-    sim_exchange_ghost_rows(sim, sim->u);
-    sim_exchange_ghost_rows(sim, sim->v);
-    sim_exchange_ghost_rows(sim, sim->pressure);
-    comm_time += MPI_Wtime() - temp_start;
+  // 9) velocity correction
+  t = MPI_Wtime();
+  mirror_and_halo_exchange(sim, sim->pressure, enforce_global_scalar_bc);
+  update_velocity(sim);
+  comp += MPI_Wtime() - t;
+  mirror_and_halo_exchange(sim, sim->u, enforce_global_velocity_bc);
+  mirror_and_halo_exchange(sim, sim->v, enforce_global_velocity_bc);
 
-    temp_start = MPI_Wtime();
-    solve_pressure(sim);
-    sim->timing.pressure_solve_time += MPI_Wtime() - pressure_start;
-    comp_time += MPI_Wtime() - temp_start;
+  // finalize
+  sim->timing.computation_time   += comp;
+  sim->timing.communication_time += comm;
+  sim->timing.total_time         += MPI_Wtime() - t0;
+  sim->timing.step_count++;
+  sim->time += sim->dt;
 
-    // 9) velocity update
-    sim_exchange_ghost_rows(sim, sim->pressure);
-    update_velocity(sim);
-
-    // Update timing statistics
-    sim->timing.computation_time += comp_time;
-    sim->timing.communication_time += comm_time;
-    sim->timing.total_time += MPI_Wtime() - step_start;
-    sim->timing.step_count++;
-
-    // advance time & print
-    sim->time += sim->dt;
-    if (sim->rank == 0) {
-        printf("Step %d, time=%.3f\n", step, sim->time);
-        printf("  Computation: %.3f ms\n", comp_time * 1000.0);
-        printf("  Communication: %.3f ms\n", comm_time * 1000.0);
-        printf("  Total step time: %.3f ms\n", (MPI_Wtime() - step_start) * 1000.0);
-    }
+  if (sim->rank == 0) {
+      printf("Step %d, time=%.3f  comp=%.2fms  comm=%.2fms\n",
+             step, sim->time,
+             comp*1000.0, comm*1000.0);
+  }
 }
