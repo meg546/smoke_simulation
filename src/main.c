@@ -164,23 +164,6 @@ int main(int argc, char **argv) {
         printf("Load Imbalance: %.2f%%\n",
                ((max_time - min_time) / avg_time) * 100.0);
 
-        if (sequential_time > 0) {
-            sim->metrics.speedup = sequential_time / total_compute_time;
-            sim->metrics.efficiency = sim->metrics.speedup / nprocs;
-            sim->metrics.serial_fraction = (nprocs - sim->metrics.speedup) / 
-                                         (sim->metrics.speedup * (nprocs - 1));
-
-            printf("\nParallel Metrics:\n");
-            printf("Sequential Time (p=1): %.3f seconds\n", sequential_time);
-            printf("Speedup: %.2f\n", sim->metrics.speedup);
-            printf("Efficiency: %.2f%%\n", sim->metrics.efficiency * 100.0);
-            printf("Estimated Serial Fraction: %.3f\n", sim->metrics.serial_fraction);
-            
-            printf("\nScaling Analysis:\n");
-            printf("Linear Speedup (theoretical): %.2f\n", (double)nprocs);
-            printf("Scaling Efficiency: %.2f%%\n",
-                   (sim->metrics.speedup / nprocs) * 100.0);
-
             // --- append CSV with all metrics for this run ---
             const char *outfname = "scaling_results.csv";
             FILE *fp = fopen(outfname, "a");
@@ -208,7 +191,6 @@ int main(int argc, char **argv) {
                 fclose(fp);
             }
         }
-    }
 
     // Cleanup
     if (rank == 0) {
