@@ -21,10 +21,10 @@ int main(int argc, char **argv) {
     MPI_Barrier(MPI_COMM_WORLD);
 
     // Grid & sim params
-    const int NX = 500, NY = 500;
+    const int NX = 256, NY = 256;
     const double Lx = 1.0, Ly = 1.0;
-    const double dt = 0.0002, T = 1.0;
-    const int output_interval = 2;
+    const double dt = 0.003, T = 1.5;
+    const int output_interval = 1;
 
     // Start total time measurement
     double total_start_time = MPI_Wtime();

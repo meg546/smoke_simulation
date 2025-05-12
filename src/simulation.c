@@ -132,15 +132,15 @@ SimulationConfig default_config(void) {
   c.T                             = 5.0;
 
   // ————— Diffusion & viscosity ——————
-  c.density_diffusion             = 0.00005;
-  c.velocity_viscosity            = 0.0002;
+  c.density_diffusion             = 0.0001;
+  c.velocity_viscosity            = 0.0005;
 
   // ———— Pressure solver (stability & speed) ————
-  c.pressure_tolerance            = 1e-6;
-  c.pressure_max_iter             = 2000;
+  c.pressure_tolerance            = 1e-5;
+  c.pressure_max_iter             = 800;
 
   // —————— Buoyancy & ambient ——————
-  c.buoyancy_beta                 = 0.02;
+  c.buoyancy_beta                 = 0.03;
   c.ambient_density               = 0.001;
 
   // ————— Wind —————
@@ -148,13 +148,13 @@ SimulationConfig default_config(void) {
   c.wind_v                        = 0.0;
 
   // ————— Turbulence & vorticity —————
-  c.turbulence_magnitude          = 0.007;
+  c.turbulence_magnitude          = 0.02;
   c.turbulence_injection_interval = 1;
   c.vorticity_epsilon             = 0.20;
 
   // ————— Smoke source —————
-  c.smoke_radius                  = 10;
-  c.smoke_amount                  = 0.6;
+  c.smoke_radius                  = 5;
+  c.smoke_amount                  = 0.4;
   c.smoke_pulse_period            = 1;
   c.smoke_pulse_duration          = (int) (c.T / c.dt);
 
@@ -163,7 +163,7 @@ SimulationConfig default_config(void) {
   c.velocity_clamp_max            =  4.0;
 
   // ———— Thermal effects ————
-  c.thermal_diffusivity           = 0.0005;
+  c.thermal_diffusivity           = 0.00005;
   c.ambient_temperature           = 300.0;
 
   return c;
