@@ -1,0 +1,2 @@
+p,wall_time_s,avg_comp_ms,avg_comm_ms,speedup,efficiency_pct,serial_frac
+4,50.063178,85.406,0.015,0.000,0.0,0.000000

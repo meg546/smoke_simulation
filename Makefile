@@ -5,8 +5,9 @@ CC       = mpicc
 CFLAGS   = -Wall -O3 -std=c99
 LDFLAGS  = -lm
 
-# Source directory
+# Directories
 SRC_DIR  = src
+BUILD_DIR = build
 
 # Source files
 SRCS     = $(SRC_DIR)/main.c \
@@ -15,27 +16,32 @@ SRCS     = $(SRC_DIR)/main.c \
            $(SRC_DIR)/utils.c \
            $(SRC_DIR)/visualization.c
 
-# Object files (one .o per .c)
-OBJS     = $(SRCS:.c=.o)
+# Object files (placed in build directory)
+OBJS     = $(SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
 # Target executable
 TARGET   = smoke_sim
 
 # Default rule
-all: $(TARGET)
+all: $(BUILD_DIR) $(TARGET)
+
+# Create build directory
+$(BUILD_DIR):
+	@mkdir -p $(BUILD_DIR)
 
 # Link step
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Compile step
-$(SRC_DIR)/%.o: $(SRC_DIR)/%.c
+# Compile step - object files go in build directory
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Clean rule: removes object files, executable, vtk outputs, and data/*
 clean:
 	@echo "Cleaning..."
-	-rm -f $(OBJS) $(TARGET)
+	-rm -f $(TARGET)
+	-rm -rf $(BUILD_DIR)
 	-rm -f out_r*_step*.vtk
 	-rm -rf data/*
 
@@ -47,7 +53,7 @@ clean-all: clean
 # Create necessary directories
 setup:
 	@echo "Setting up project directories..."
-	@mkdir -p data results docs examples
+	@mkdir -p data results docs examples $(BUILD_DIR)
 
 # Run performance analysis
 analyze:

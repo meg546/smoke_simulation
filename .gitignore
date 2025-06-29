@@ -2,6 +2,9 @@
 smoke_sim
 *.exe
 
+# Build directory
+build/
+
 # Object files
 *.o
 *.obj

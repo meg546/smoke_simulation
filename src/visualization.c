@@ -11,7 +11,9 @@ void write_vtk(Simulation *sim, const char *filename) {
     snprintf(filepath, sizeof(filepath), "data/%s", filename);
 
     // Try to create data directory if it doesn't exist
-    system("mkdir -p data");
+    if (system("mkdir -p data") != 0) {
+        fprintf(stderr, "Warning: Failed to create data directory\n");
+    }
 
     FILE *fp = fopen(filepath, "w");
     if (!fp) {
@@ -82,7 +84,9 @@ void write_vtk_global(int NX, int global_NY,
     if (!f) 
     {
         // Create data directory if it doesn't exist
-        system("mkdir -p data");
+        if (system("mkdir -p data") != 0) {
+            fprintf(stderr, "Warning: Failed to create data directory\n");
+        }
         // Try opening file again
         f = fopen(filepath, "w");
         if (!f) {

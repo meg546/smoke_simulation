@@ -13,9 +13,13 @@ int main(int argc, char **argv) {
 
     // Create data directory at startup (only rank 0)
     if (rank == 0) {
-        system("mkdir -p data");
+        if (system("mkdir -p data") != 0) {
+            printf("Warning: Failed to create data directory\n");
+        }
         // Clear any existing output files
-        system("rm -f data/output_*.vtk");
+        if (system("rm -f data/output_*.vtk") != 0) {
+            printf("Warning: Failed to clean existing output files\n");
+        }
     }
     // Make sure all processes wait until directory is created
     MPI_Barrier(MPI_COMM_WORLD);
@@ -25,9 +29,6 @@ int main(int argc, char **argv) {
     const double Lx = 1.0, Ly = 1.0;
     const double dt = 0.003, T = 1.5;
     const int output_interval = 1;
-
-    // Start total time measurement
-    double total_start_time = MPI_Wtime();
 
     // Build grid & config
     Grid *grid = create_grid(NX, NY, Lx, Ly);
@@ -110,7 +111,10 @@ int main(int argc, char **argv) {
         } else {
             FILE *fp = fopen("sequential_baseline.txt", "r");
             if (fp) {
-                fscanf(fp, "%lf", &sequential_time);
+                if (fscanf(fp, "%lf", &sequential_time) != 1) {
+                    printf("Warning: Failed to read sequential baseline\n");
+                    sequential_time = -1;
+                }
                 fclose(fp);
             } else {
                 printf("Warning: Sequential baseline not found. Run with p=1 first.\n");

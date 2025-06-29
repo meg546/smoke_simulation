@@ -41,30 +41,6 @@ static void mirror_and_halo_exchange(Simulation *sim,
 }
 
 // -----------------------------------------------------------------------------
-// Exchange our two ghost‐rows (j=0 and j=local_NY+1) with up/down neighbors
-// -----------------------------------------------------------------------------
-static void sim_exchange_ghost_rows(Simulation *sim, double *field) {
-    MPI_Status status;
-    int NX = sim->NX;
-    int M  = sim->local_NY;
-
-    if (sim->rank > 0) {
-        MPI_Sendrecv(
-            &field[IX(0,1,NX)],   NX, MPI_DOUBLE, sim->rank-1, 100,
-            &field[IX(0,0,NX)],   NX, MPI_DOUBLE, sim->rank-1, 101,
-            MPI_COMM_WORLD, &status
-        );
-    }
-    if (sim->rank < sim->nprocs-1) {
-        MPI_Sendrecv(
-            &field[IX(0,M,NX)],   NX, MPI_DOUBLE, sim->rank+1, 101,
-            &field[IX(0,M+1,NX)], NX, MPI_DOUBLE, sim->rank+1, 100,
-            MPI_COMM_WORLD, &status
-        );
-    }
-}
-
-// -----------------------------------------------------------------------------
 // Enforce no‐slip on global walls (fills velocity ghost rows)
 // -----------------------------------------------------------------------------
 static void enforce_global_velocity_bc(Simulation *sim, double *unused) {
