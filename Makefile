@@ -39,4 +39,46 @@ clean:
 	-rm -f out_r*_step*.vtk
 	-rm -rf data/*
 
-.PHONY: all clean
+# Clean everything including results
+clean-all: clean
+	@echo "Cleaning all outputs..."
+	-rm -rf results/*.png results/*.dat
+
+# Create necessary directories
+setup:
+	@echo "Setting up project directories..."
+	@mkdir -p data results docs examples
+
+# Run performance analysis
+analyze:
+	@echo "Running performance analysis..."
+	cd scripts && python3 speedup_plot.py
+
+# Quick test with single process
+test:
+	@echo "Running single-process test..."
+	mpirun -n 1 ./$(TARGET)
+
+# Example multi-process runs
+run-4:
+	@echo "Running with 4 processes..."
+	mpirun -n 4 ./$(TARGET)
+
+run-8:
+	@echo "Running with 8 processes..."
+	mpirun -n 8 ./$(TARGET)
+
+# Help target
+help:
+	@echo "Available targets:"
+	@echo "  all        - Build the simulation (default)"
+	@echo "  clean      - Remove build files and data"
+	@echo "  clean-all  - Remove all build files and results"
+	@echo "  setup      - Create necessary directories"
+	@echo "  test       - Run single-process test"
+	@echo "  run-4      - Run with 4 processes"
+	@echo "  run-8      - Run with 8 processes"
+	@echo "  analyze    - Generate performance plots"
+	@echo "  help       - Show this help message"
+
+.PHONY: all clean clean-all setup analyze test run-4 run-8 help

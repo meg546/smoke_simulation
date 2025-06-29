@@ -1,11 +1,64 @@
-# Ignore the data folder
-data/
-*.o
-*.out
+# Compiled executables
+smoke_sim
 *.exe
-*.log
+
+# Object files
+*.o
+*.obj
+
+# Build artifacts
+*.a
+*.so
+*.dylib
+
+# VTK output files
+data/output_*.vtk
+out_r*_step*.vtk
+
+# Temporary files
 *.tmp
-*.swp
-.DS_Store
+*.temp
+*~
+*.out
+*.log
+
+# Editor files
 .vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Results and logs (keep directory structure)
+results/*.png
+results/*.dat
+results/*.log
+
+# Data directory contents (keep directory structure)  
+data/*.vtk
+data/*.dat
+
+# OS specific
+.nfs*
+
+# IDE files
+.idea/
+*.iml
+
+# Backup files
+*.bak
+*.backup
+
+# Core dumps
+core
+core.*
+
+# Profiling files
+gmon.out
+*.prof
 .idea/
